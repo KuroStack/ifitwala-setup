@@ -1,0 +1,7 @@
+repo/ifitwala_ed/.git
+repo/ifitwala_ed/node_modules
+repo/ifitwala_ed/cypress
+repo/ifitwala_ed/cypress.config.js
+**/*.log
+.env
+.git

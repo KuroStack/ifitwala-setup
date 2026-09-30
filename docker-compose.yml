@@ -1,0 +1,122 @@
+x-frappe-image: &frappe-image
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: ifitwala_ed:latest
+
+x-frappe-env: &frappe-env
+  SITE_NAME: ${SITE_NAME:-ifitwala.localhost}
+  DB_HOST: mariadb
+  DB_PORT: "3306"
+  DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+  REDIS_CACHE: redis://redis-cache:6379
+  REDIS_QUEUE: redis://redis-queue:6379
+
+services:
+  mariadb:
+    image: mariadb:10.6
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD:-admin}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    volumes:
+      - mariadb-data:/var/lib/mysql
+
+  redis-cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-cache-data:/data
+
+  redis-queue:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-queue-data:/data
+
+  backend:
+    <<: *frappe-image
+    restart: unless-stopped
+    environment:
+      <<: *frappe-env
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_started
+      redis-queue:
+        condition: service_started
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    command: ["bench", "start"]
+    ports:
+      - "${HTTP_PORT:-8000}:8000"
+
+  websocket:
+    <<: *frappe-image
+    restart: unless-stopped
+    environment:
+      <<: *frappe-env
+    depends_on:
+      - backend
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    command: ["node", "apps/frappe/socketio.js"]
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    ports:
+      - "${SOCKETIO_PORT:-9000}:9000"
+
+  queue-short:
+    <<: *frappe-image
+    restart: unless-stopped
+    environment:
+      <<: *frappe-env
+    depends_on:
+      - backend
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    command: ["bench", "worker", "--queue", "short,default"]
+
+  queue-long:
+    <<: *frappe-image
+    restart: unless-stopped
+    environment:
+      <<: *frappe-env
+    depends_on:
+      - backend
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    command: ["bench", "worker", "--queue", "long,default"]
+
+  scheduler:
+    <<: *frappe-image
+    restart: unless-stopped
+    environment:
+      <<: *frappe-env
+    depends_on:
+      - backend
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    command: ["bench", "schedule"]
+
+volumes:
+  mariadb-data:
+  redis-cache-data:
+  redis-queue-data:
+  sites:
+  logs:
